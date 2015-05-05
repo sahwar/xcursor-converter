@@ -1,0 +1,20 @@
+; Sample Windows Cursor Scheme File - Minimal
+; This will NOT install on Windows, but will be accepted as input for theme conversion
+
+CUR_DIR       = "Cursors\example-theme"
+SCHEME_NAME   = "example-theme"
+pointer       = "normal.cur"
+help          = "help.cur"
+work          = "background.ani"
+busy          = "busy.ani"
+text          = "text.cur"
+unavailiable  = "unavailable.cur"
+vert          = "resize vertical.cur"
+horz          = "resize horizontal.cur"
+dgn1          = "resize diagonal 1.cur"
+dgn2          = "resize diagonal 2.cur"
+move          = "move.cur"
+link          = "link.cur"
+cross         = "precise.cur"
+hand          = "pen.cur"
+alternate     = "alternate.cur"

@@ -1,0 +1,51 @@
+; Sample Windows Cursor Scheme File
+
+[Version]
+signature="$CHICAGO$"
+
+[DefaultInstall]
+CopyFiles = Scheme.Cur, Scheme.Txt
+AddReg    = Scheme.Reg
+
+[DestinationDirs]
+Scheme.Cur = 10,"%CUR_DIR%"
+Scheme.Txt = 10,"%CUR_DIR%"
+
+[Scheme.Reg]
+HKCU,"Control Panel\Cursors\Schemes","%SCHEME_NAME%",,"%10%\%CUR_DIR%\%pointer%,%10%\%CUR_DIR%\%help%,%10%\%CUR_DIR%\%work%,%10%\%CUR_DIR%\%busy%,%10%\%CUR_DIR%\%cross%,%10%\%CUR_DIR%\%Text%,%10%\%CUR_DIR%\%Hand%,%10%\%CUR_DIR%\%unavailiable%,%10%\%CUR_DIR%\%Vert%,%10%\%CUR_DIR%\%Horz%,%10%\%CUR_DIR%\%Dgn1%,%10%\%CUR_DIR%\%Dgn2%,%10%\%CUR_DIR%\%move%,%10%\%CUR_DIR%\%alternate%,%10%\%CUR_DIR%\%link%"
+
+[Scheme.Cur]
+normal.cur
+help.cur
+background.ani
+busy.ani
+text.cur
+unavailable.cur
+resize vertical.cur
+resize horizontal.cur
+resize diagonal 1.cur
+resize diagonal 2.cur
+move.cur
+link.cur
+precise.cur
+pen.cur
+alternate.cur
+
+[Strings]
+CUR_DIR       = "Cursors\example-theme"
+SCHEME_NAME   = "example-theme"
+pointer       = "normal.cur"
+help          = "help.cur"
+work          = "background.ani"
+busy          = "busy.ani"
+text          = "text.cur"
+unavailiable  = "unavailable.cur"
+vert          = "resize vertical.cur"
+horz          = "resize horizontal.cur"
+dgn1          = "resize diagonal 1.cur"
+dgn2          = "resize diagonal 2.cur"
+move          = "move.cur"
+link          = "link.cur"
+cross         = "precise.cur"
+hand          = "pen.cur"
+alternate     = "alternate.cur"
