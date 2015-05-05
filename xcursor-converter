@@ -1,0 +1,1902 @@
+#!/usr/bin/perl
+
+###########################################################
+#
+#    xcursor-converter - Convert between different cursor formats and perform additional image processing.
+#    Copyright (C) 2015 Infinality
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#
+######## Features #######
+#
+# * Converts CursorXP, CursorFX, and Windows themes to X11 themes
+# * Can accept a *.CurXPTheme, *.cursorfx file as input, or be run from within an extracted theme directory
+# * CursorFX/XP Animations and Scripts are supported
+# * Can modify opacity of cursors
+# * Can resize cursors
+# * Can generate simple and full screenshots of cursors
+# * Can convert cursors to mirrored and left-handed versions (there is a slight difference).
+# * Can add customized drop shadows
+# * Can install the theme for you
+# * Creates a .tar.gz file automatically inside current directory
+#
+#
+######## Cursor installation #######
+#
+# * Run:  xcursor-converter --install [input_file]
+# * Unzip generated tar.gz file into /usr/share/icons/ (as root), or ~/.icons/ (as normal user).
+#
+#   Use gnome-tweak-tool, KDE System Settings, or your desktop environment's settings area to change the cursors.
+#
+#
+####### Requirements #######
+#
+# Requires packages:   ImageMagick ImageMagick-perl perl-Config-IniFiles perl-Compress-Zlib perl-Data-Dumper xcursorgen unzip perl-File-Format-RIFF perl-5.10+ icotool Imager
+#
+# Installation varies by distro.  Fedora users can do:
+#    yum install ImageMagick ImageMagick-perl perl-Config-IniFiles perl-Compress-Zlib perl-Data-Dumper xcursorgen unzip icotool perl-Imager
+#
+# Ubuntu users may be able to do something like:
+#    sudo apt-get install libconfig-inifiles-perl perlmagick imagemagick xcursorgen unzip icotool
+#
+# To install the RIFF file format, run "cpan" as root, and do "install File::Format:RIFF"
+#
+# Future roadmap:
+# * Additional input and output formats
+# * Down/hold click cursor variation, if possible. (It depends on if X can switch the cursor when you click.)
+# * Add click effects like CursorXP. Not sure if this will work, but can't hurt to try. (It depends on if X can switch the cursor when you click.)
+#
+#
+######## Changelog #######
+#
+#  Version 3.0
+#  Import .cursorfx files!  (Thanks to examining code here:  https://github.com/coolwanglu/cfx2xc)
+#  Import Windows mouse schemes!
+#  Huge code cleanup.  Better variable names, better formatting.  Most slop is gone.
+#  Remove version number from script filename.
+#  Do dependency checking within script and don't fail unless a dependency is required for requested options.
+#  Introduce a native format .xcc to save cursor projects in.
+#  Modularize further to allow for later addition of new input / output formats.
+#  Renamed to xcursor-converter since the code is 100% divergent from the original source.
+#  Licensed under GPL.
+#  Changed drop shadow defaults to something less extreme.
+#  Attempt to fix certain corrupted Windows cursor files upon import.
+#
+#
+#  Version 2.4
+#  A *near total* rewrite/reorganization of the code to make it more modular and extensible.  Cursor data is now stored in a common central data structure regardless of input format.  Please report bugs!
+#  Dramatically reduced the size of cursor sets made from some CursorXP themes which use scripts, by capping the number of script lines to 10 by default
+#  Added --script-limit option to allow you to set the value for the above.
+#  Fixed a regression from 2.1 in the output files by xcursorgen.  There were extra ones present that were unneccessary.
+#  Changed --screenshot-large to use the output format's names (i.e. X11 names instead of CursorXP names).
+#
+#
+#  Version 2.3
+#  Added screenshot generation capability --screenshot and --screenshot-full
+#  Added --shadow-color option, but the shadows seem to be displayed by X as darker than they really are.  Suggestions appreciated.
+#  Added ability to mirror all cursors before or after applying a shadow. --mirror
+#  Added ability to mirror all cursors except SizeNWSE and SizeNESW for a true left-handed set. --mirror --left-handed
+#  Fixed a problem with inputting the unzip utility.
+#  Removed option for user to set temp directory.  Too dangerous as files in it can be deleted.  Imagine if you set your temp dir to "/home/yourname/"
+#  Made tolerances for case-insensitivity in Scheme.ini and .png files for files included inside .CurXPThemes
+#  Fixed a problem reading in [Description] tag (first line was not included)
+#
+#  Version 2.2.1
+#  Fixed a really obvious bug that I should have caught during testing.  I sure hope there aren't more!  ;)  Sorry bout dat!
+#  Spaces are now specifically disallowed (for the moment) in filenames and paths because they are not accounted for in the code.
+#
+#  Version 2.2
+#  Now accepts a *.curxptheme file as input!  No more PITA unzipping!  Just add the theme location to the end of the command.
+#    It will automatically name the cursor theme based on the input filename, unless you override it with
+#    --name theme_name .  (Either way, the curxptheme file is unzipped to /tmp/$script_name/theme_name first, then
+#    processing is done.)  This adds another "temp" layer to things.  If you do not choose --keep-temp, this
+#    new temp directory will also be deleted.  *ALWAYS* run as normal user, not root!  Also,
+#    The X11 theme .tar.gz file will be placed in the current directory if you use this method.
+#    The old method of running inside a directory still works too.
+#  Added resize option --resize which accepts an integer percent.  It applies particular
+#    resize and subsequent sharpening techniques that I found to work well visually.
+#  Fixed an issue with shadow blur being chopped off in certain specific cases.
+#  Huge speed increase by removing some redundant processing.
+#  Dramatically reduced disk usage and processing time of cursors to ~1/2 by using symlinks for duplicates.
+#  Fixed the verbose option -v and added --verbose.  Also clarified its output.
+#  Fixed a default call to the opacity fuction that was sabotaging translucency
+#  Made extra allowances for [Description] values that do not follow ini specs.
+#  Now saves [Description] values into index.theme "Comments" section.
+#  Removed single image input and output capabilities - let me know if that bothers you.
+#
+#  Version 2.1
+#  Installation (to ~/.icons) option:  --install
+#  Added option to not create tar.gz of theme:  --nozip
+#  Added option to keep temporary files:  --keep-temp
+#  Reworked the --help option to give a better display and more info
+#  Fixed some issues with ini rewriting
+#  Added native version identifier
+#  Renamed default temp directory to something less scary to delete (was tmp)
+#
+#  Version 2.0
+#  Started using version numbers, for my own sake. Sorry.  ;)
+#  Fixed shadow algorithm (how come nobody fixed it sooner??!)
+#  Automatically creates a .tar.gz file of X11 cursors.
+#  Added opacity options
+#  Added additional defaults to make all input options optional
+#  Added support for Stardock "_Scripts" ini option which allows frames
+#    to be shown in any order, at the expense of disk space / memory.
+#
+#
+#  Disclaimer: This code may look like crap and / or contain poor coding practices.  Suggestions and improvements appreciated.
+
+
+use strict;
+use Getopt::Long;
+use File::Path;
+use File::Copy;
+use Cwd;
+use File::Basename;
+use Encode qw/encode decode/;
+use Compress::Zlib ;
+use Data::Dumper;
+no warnings 'experimental::smartmatch';
+use feature qw(switch say);
+use IO::Seekable;
+
+my ($config_file, $path, $name, $generator, $verbose, $inherits, $tmpscheme, $shadow, $shadowopacity, $shadowx, $shadowy, $shadowblur, $shadowblursigma, $testinput, $testoutput, $opacity, $install, $nozip, $keeptemp, $printversion, $script_version, $newsize, $rollpixels, $status, $comment, $theme_input_file, $unzip, $basepath, $cwd_dirname, $flip, $lefthanded, $makescreen, $shadowcolor, $makescreenfull, $maxframes, $maxwidth, $maxheight, $convertingcurxp, $scriptlimit, $debug, $script_name, $override_name, $cursor_temp_path, $input_basename, $input_dirname, $input_filename, $input_suffix, $output_parent_path,$output_path, $output_type_name, $cfg, @cursors, @cursors2, $cursors, $cursors2, $script_temp_path, @sections, $riff_installed, $imagemagick_installed, $configini_installed, $compresszlib_installed, $imager_installed, $montage );
+
+
+if (eval {require File::Format::RIFF;1;}) {
+  File::Format::RIFF->import();
+  $riff_installed=1;
+}
+
+if (eval {require Image::Magick;1;}) {
+  Image::Magick->import();
+  $imagemagick_installed=1;
+}
+
+if (eval {require Config::IniFiles;1;}) {
+  Config::IniFiles->import();
+  $configini_installed=1;
+}
+
+if (eval {require Compress::Zlib;1;}) {
+  Compress::Zlib->import();
+  $compresszlib_installed=1;
+}
+
+if (eval {require Imager;1;}) {
+  Imager->import();
+  $imager_installed=1;
+}
+
+#printf "$configini_installed $imagemagick_installed $riff_installed";
+#exit 0;
+
+
+# default for variables
+$script_version="3.0";
+$script_name="xcursor-converter";
+$verbose=0;
+$shadowopacity=30;
+$opacity=100;
+$shadowx=1;
+$shadowy=1;
+$shadowblur=2;
+$shadowblursigma=2;
+$cwd_dirname=getcwd();      # current working directory
+$generator=`which xcursorgen`;
+$generator =~ s/\n//g;
+$unzip =`which unzip`;
+$unzip =~ s/\n//g;
+$montage =`which montage`;
+$montage =~ s/\n//g;
+$testinput="";
+$testoutput="test.png";
+$override_name="";
+$name="";
+$inherits="core";
+$install=0;
+$nozip=0;
+$keeptemp=0;
+$newsize=100;
+$shadowcolor="black";
+$maxframes=0;        # Keeps track of this for screenshot-large
+$maxwidth=0;        # Keeps track of this for screenshot-large
+$maxheight=0;        # Keeps track of this for screenshot-large
+$scriptlimit=100;
+$output_type_name="x11";
+
+
+sub print_message {
+  my $message = shift();
+  printf "$message\n";
+}
+
+sub graceful_exit {
+  my $exit_status = shift();
+  if (!$keeptemp){ delete_temp(); }
+  exit $exit_status;
+}
+
+sub error_message {
+  my $message = shift();
+  print_message "ERROR: $message";
+  graceful_exit 1;
+}
+
+sub warning_message {
+  my $message = shift();
+  print_message "WARNING: $message";
+}
+
+sub verbose_message {
+  my $message = shift();
+  if ($verbose) { print_message "$message"; }
+}
+
+sub debug_message {
+  my $message = shift();
+  my $debug_level = shift();
+  if ($debug >= $debug_level) { print_message "DEBUG: $message"; }
+}
+
+sub delete_temp {
+  $status = `rm -r $cursor_temp_path $output_parent_path`;
+  verbose_message "Removed temp directories:".$cursor_temp_path." ".$output_parent_path;
+}
+
+
+sub print_usage {
+  print "Usage:\n$0 [options] [input_filename]\n";
+  print "\t[-v | --verbose]             \tVerbose output.\n";
+  print "\t[-D level | --debug level ]  \tDebug output. Level is 0-2.\n";
+  print "\t[--name theme_name ]         \tName for theme being output (default = input_filename)\n";
+  print "\t[--output-type type ]        \tOptions: x11 (default), native\n";
+  print "\t[--inherits theme]           \tInherits existing theme (default = core)\n";
+  print "\t[--shadow]                   \tApply a drop shadow to cursors\n";
+  print "\t[--shadow-x pixels]          \tDrop shadow offset horizontal (default = 6)\n";
+  print "\t[--shadow-y pixels]          \tDrop shadow offset vertical (default = 6)\n";
+  print "\t[--shadow-blur size (pixels)]\tGaussian blur size (default = 5)\n";
+  print "\t[--shadow-blur-sigma size]   \tGaussian blur sigma (default = 3)\n";
+  print "\t[--shadow-opacity 0-100]     \tOpacity of drop shadow % (default = 40)\n";
+  print "\t[--shadow-color \"color\"]   \tShadow color, given in any reasonable format like name,\n";
+  print "\t                             \t#rgb, #rrggbb. See http://www.imagemagick.org/script/color.php\n";
+  print "\t                             \t(default = black)\n";
+  print "\t[--overall-opacity 0-100]    \tOverall opacity of cursors % (default = 100)\n";
+  print "\t[--generator xcursorgen-path]\tLocation of xcursorgen (default = auto)\n";
+  print "\t[--unzip unzip-path]         \tLocation of unzip utility (default = auto)\n";
+  print "\t[--resize 1-300]             \tResize cursors % (Careful! Files grow quickly!)\n";
+  print "\t                             \t(default = 100)\n";
+  print "\t[--mirror before|after]      \tMake mirrors of all cursors before or after making a shadow.\n";
+  print "\t[--left-handed]              \tUsed with --mirror.  Will make mirrors of all cursors \n";
+  print "\t                             \texcept SizeNWSE and SizeNESW cursors.\n";
+  print "\t[--screenshot]               \tMake a .png screenshot of cursors after converting.\n";
+  print "\t[--script-limit number]      \tLimit # of script frames to reduce filesizes (default = 100).\n";
+  print "\t[--screenshot-full]          \tMake a .png screenshot including animation frames.\n";
+  print "\t[--install]                  \tInstall to ~/.icons/ \n";
+  print "\t[--nozip]                    \tDon't Create tar.gz of theme \n";
+  print "\t[--keep-temp]                \tDon't delete temporary files \n";
+  print "\t[--version]                  \tPrint version information\n";
+  print "\t[--help]                     \tThis help information\n";
+  print "\t\n";
+  print "\n\tINFORMATION:  CursorXP themes (.CurXPTheme) are simply zip files.  There are two\n";
+  print "\tways you can run this script.  The first way is to decompress a .CurXPTheme somewhere,\n";
+  print "\tlike ~/temp/theme_name, cd to the directory, and run the script (There will be a \n";
+  print "\tScheme.ini file there).  If you use this method, it is recommended to at least provide: \n";
+  print "\t--name theme_name as an option to the script.  The second way is to simply provide the\n";
+  print "\t.CurXPTheme filename as input.  This will place a .tar.gz file of the X11 theme into the \n";
+  print "\tcurrent directory.\n";
+  print "\t\n";
+  print "\nExamples:\n";
+  print "\n\tDirectly convert and .tar.gz a .CurXPTheme file:\n";
+  print "\t$0 theme.CurXPTheme\n";
+  print "\n\tJust convert and install a .CurXPTheme file (don't create a .tar.gz):\n";
+  print "\t$0 --nozip --install theme.CurXPTheme\n";
+  print "\n\tDirectly convert a .CurXPTheme file and make it a true left-handed set:\n";
+  print "\t$0 --mirror before --lefthanded theme.CurXPTheme\n";
+  print "\n\tDirectly converting, .tar.gz, adding shadow, renaming, and installing a .CurXPTheme file:\n";
+  print "\t$0 --name newname --shadow --install theme.CurXPTheme\n";
+  print "\n\tConverting and installing inside an unzipped .CurXPTheme directory (old way):\n";
+  print "\t$0 --name theme_name --install \n";
+  print "\n\n\tView $0 for more details!\n";
+  graceful_exit 0;
+};
+
+GetOptions (
+  'name=s'=>\$override_name,
+  'inherits=s'=>\$inherits,
+  'shadow'=>\$shadow,
+  'v'=>\$verbose,
+  'verbose'=>\$verbose,
+  'output-type=s'=>\$output_type_name,
+  'D=i'=>\$debug,
+  'debug=i'=>\$debug,
+  'generator=s'=>\$generator,
+  'unzip=s'=>\$unzip,
+  'help'=>\&print_usage,
+  'shadow-x=i'=>\$shadowx,
+  'shadow-y=i'=>\$shadowy,
+  'shadow-blur=i'=>\$shadowblur,
+  'shadow-blur-sigma=i'=>\$shadowblursigma,
+  'shadow-opacity=i'=>\$shadowopacity,
+  'overall-opacity=i'=>\$opacity,
+  'shadow-color=s'=>\$shadowcolor,
+  'install'=>\$install,
+  'nozip'=>\$nozip,
+  'keep-temp'=>\$keeptemp,
+  'version'=>\$printversion,
+  'resize=i'=>\$newsize,
+  'mirror=s'=>\$flip,
+  'screenshot'=>\$makescreen,
+  'screenshot-full'=>\$makescreenfull,
+  'screenshot-full'=>\$makescreenfull,
+  'script-limit=s'=>\$scriptlimit,
+);
+
+unless (-f $generator) { die "xcursorgen utility not found!";}
+unless (-f $unzip ){ die "unzip utility not found!"; }
+unless (-f $montage ){ die "montage utility not found!"; }
+
+if ($printversion){
+  print "$0 \n";
+  print "\tVersion: $script_version\n";
+  graceful_exit 0;
+}
+
+
+use constant {
+  CURSOR_STATUS_NORMAL => 1,
+  CURSOR_STATUS_PRESSED => 2,
+
+  ANIMATION_TYPE_NONE => 0,
+  ANIMATION_TYPE_LOOP => 2,
+  ANIMATION_TYPE_ALTERNATE => 3,
+
+  CURSOR_TYPE_CURSORFX => 0,
+  CURSOR_TYPE_CURSORXP => 1,
+  CURSOR_TYPE_WINDOWS => 2,
+  CURSOR_TYPE_X11 => 3,
+  CURSOR_TYPE_CURSORXPDIR => 4,
+  CURSOR_TYPE_NATIVE => 5,
+
+  CURSOR_TYPE_FIRST => 0,
+  CURSOR_TYPE_LAST => 2,
+};
+
+
+# defaults
+my $input_cursortype = CURSOR_TYPE_CURSORFX;
+my $output_cursortype = CURSOR_TYPE_X11;
+
+# [CursorFX mappings array], [CursorXP mappings array], [Windows mappings array], [X11 mappings array]
+my @cursor_namemap=(
+    [['0'],
+     ['Arrow'],
+     ['pointer'],
+     ['00standard_select', 'default'
+                              ,'arrow'
+
+                              ,'top-left-arrow'
+                              ,'top_left_arrow'
+                              ,'left_ptr'
+
+                              ,'x-cursor'
+                              ,'X_cursor'
+                              ]]
+
+  , [['1'],
+     ['Help'],
+     ['help'],
+     ['01help_select', 'ask'
+                          ,'dnd-ask'
+
+                          ,'help'
+                          ,'question_arrow'
+                          ,'whats_this'
+                          ,'d9ce0ab605698f320427677b458ad60b'
+                          ]]
+
+  , [['2'],
+    ['AppStarting'],
+    ['work'],
+    ['02working_in_background', 'progress'
+                                    ,'left_ptr_watch'
+                                    ,'08e8e1c95fe2fc01f976f1e063a24ccd'
+                                    ,'3ecb610c1bf2410f44200f48c40d3599'
+                                    ]]
+
+  , [['3'],
+    ['Wait'],
+    ['busy'],
+    ['03busy', 'wait'
+                    ,'watch'
+                    ,'0426c94ea35c87780ff01dc239897213'
+                    ]]
+
+  , [['4'],
+     ['Cross'],
+     ['cross'],
+     ['04precision_select','crosshair'
+                                ,'cross'
+                                ,'cross_reverse'
+                                ,'tcross'
+                                ]]
+
+  , [['5'],
+     ['IBeam'],
+     ['text'],
+     ['05text_select','text'
+                          ,'xterm'
+                          ,'ibeam'
+
+                          ,'vertical-text'
+                          ]]
+
+  , [['6'],
+     ['Handwriting'],
+     ['hand'],
+     ['06handwriting','pencil',
+                          ]]
+
+  , [['7'],
+     ['NO'],
+     ['unavailiable'],
+     ['07unavailable','no-drop'
+                          ,'dnd-none'
+                          ,'03b6e0fcb3499374a867c041f52298f0'
+
+                          ,'not-allowed'
+                          ,'crossed_circle'
+                          ,'forbidden'
+
+                          ,'pirate'
+                          ]]
+
+  , [['8'],
+     ['SizeNS'],
+     ['vert'],
+     ['08north_resize','col-resize'
+                            ,'sb_v_double_arrow'
+                            ,'split_v'
+                            ,'14fef782d02440884392942c11205230'
+
+                            ,'n-resize'
+                            ,'top_side'
+
+                            ,'ns-resize'
+                            ,'v_double_arrow'
+                            ,'size_ver'
+                            ,'00008160000006810000408080010102'
+
+                            ,'top-tee'
+                            ,'top_tee'
+
+                            ,'up'
+                            ,'sb_up_arrow'
+                            ]]
+
+  , [['9'],
+     ['SizeNS'],
+     ['vert'],
+     ['09south_resize','bottom-tee'
+                            ,'bottom_tee'
+
+                            ,'down'
+                            ,'sb_down_arrow'
+
+                            ,'s-resize'
+                            ,'bottom_side'
+                            ]]
+
+  , [['10'],
+     ['SizeWE'],
+     ['horz'],
+     ['10west_resize','ew-resize'
+                          ,'h_double_arrow'
+                          ,'size_hor'
+                          ,'028006030e0e7ebffc7f7070c0600140'
+
+                          ,'left'
+                          ,'sb_left_arrow'
+
+                          ,'left-tee'
+                          ,'left_tee'
+
+                          ,'row-resize'
+                          ,'sb_h_double_arrow'
+                          ,'split_h'
+                          ,'2870a09082c103050810ffdffffe0204'
+
+                          ,'w-resize'
+                          ,'left_side'
+                          ]]
+
+  , [['11'],
+     ['SizeWE'],
+     ['horz'],
+     ['11east_resize','e-resize'
+                          ,'right_side'
+
+                          ,'right'
+                          ,'sb_right_arrow'
+
+                          ,'right-tee'
+                          ,'right_tee'
+                          ]]
+
+  , [['12'],
+     ['SizeNWSE'],
+     ['dgn1'],
+     ['12northwest_resize','nw-resize'
+                                ,'top_left_corner'
+                                ,'ul_angle'
+
+                                ,'nwse-resize'
+                                ,'fd_double_arrow'
+                                ,'size_fdiag'
+                                ,'c7088f0f3e6c8088236ef8e1e3e70000'
+                                ]]
+
+  , [['13'],
+     ['SizeNWSE'],
+     ['dgn1'],
+     ['13southeast_resize','se-resize'
+                                ,'bottom_right_corner'
+                                ,'lr_angle'
+                                ]]
+
+  , [['14'],
+     ['SizeNESW'],
+     ['dgn2'],
+     ['14northeast_resize','ne-resize'
+                                ,'top_right_corner'
+                                ,'ur_angle'
+
+                                ,'nesw-resize'
+                                ,'bd_double_arrow'
+                                ,'size_bdiag'
+                                ,'fcf1c3c7cd4491d801f1e1c78f100000'
+                                ]]
+
+  , [['15'],
+     ['SizeNESW'],
+     ['dgn2'],
+     ['15southwest_resize','sw-resize'
+                                ,'bottom_left_corner'
+                                ,'ll_angle'
+                                ]]
+
+  , [['16'],
+     ['SizeAll'],
+     ['move'],
+     ['16move','cell'
+                    ,'plus'
+
+                    ,'all-scroll'
+                    ,'fleur'
+                    ,'size_all'
+                    ]]
+
+  , [['17'],
+     ['UpArrow'],
+     ['alternate'],
+     ['17alternate_select','top-right-arrow'
+                                ,'right_ptr'
+
+                                ,'move'
+                                ,'dnd-move'
+                                ,'4498f0e0c1937ffe01fd06f973665830'
+                                ,'9081237383d90e509aa00f00170e968f'
+
+                                ,'up-arrow'
+                                ,'center_ptr'
+                                ,'up_arrow'
+                                ]]
+
+  , [['18'],
+     ['Hand'],
+     ['link'],
+     ['18hand','alias'
+                    ,'link'
+                    ,'dnd-link'
+                    ,'3085a0e285430894940527032f8b26df'
+                    ,'640fb0e74195791501fd1ed57b41487f'
+
+                    ,'left-hand'
+                    ,'hand1'
+                    ,'9d800788f1b08800ae810202380a0822'
+
+                    ,'pointer'
+                    ,'hand2'
+                    ,'pointing_hand'
+                    ,'e29285e634086352946a0e7090d73106'
+
+                    ,'openhand'
+                    ,'a2a266d0498c3104214a47bd64ab0fc8'
+                    ,'b66166c04f8c3109214a4fbd64a50fc8'
+                    ,'hand'
+                    ]]
+
+  , [['19'],
+     ['Arrow'],
+     ['pointer'],
+     ['19button','copy'
+                      ,'dnd-copy'
+                      ,'1081e37283d90000800003c07f3ef6bf'
+                      ,'6407b0e94181790501fd1e167b474872'
+                      ]]
+);
+
+
+
+
+#  SHOULD THIS GET GENERALIZED TO WORK FOR ALL TYPES?
+
+# first setting is:  gets flipped for left-handed?
+# second setting is: gets included for screenshot-full?
+
+#my %curxpsettings = (
+#    Arrow  => [ 1, 1 ],
+#    Cross  => [ 1, 1 ],
+    #Hand  => [ 1, 1 ],
+    #IBeam  => [ 1, 1 ],
+    #UpArrow  => [ 1, 1 ],
+    #SizeNWSE  => [ 0, 1 ],
+    #SizeNESW  => [ 0, 1 ],
+    #SizeWE  => [ 1, 1 ],
+    #SizeNS  => [ 1, 1 ],
+    #Handwriting  => [ 1, 1 ],
+    #AppStarting  => [ 1, 1 ],
+    #SizeAll  => [ 1, 1 ],
+    #Wait  => [ 1, 1 ],
+    #NO    => [ 1, 1 ],
+#);
+
+
+
+sub shadow
+{
+  my($imageref, $swidth, $sheight, $shadowblur, $shadowblursigma, $shadowx, $shadowy, $shadowopacity) = @_;
+  my ($pre_shadow,$shadow_img,$resized);
+
+  $resized=Image::Magick->new(size=>$swidth."x".$sheight);
+  $resized->ReadImage('xc:transparent');
+  $resized->Set(type=>"TrueColorMatte");
+  $resized->Composite(image=>$$imageref,compose=>"Over");
+
+  #this is a template for making a shadow pixel by pixel
+  #basically, a black and white image to represent alpha channel.
+  $pre_shadow=$resized->Clone();
+  $pre_shadow->Separate(channel=>'Alpha');
+  $pre_shadow->Roll(x=>$shadowx,y=>$shadowy);
+  $pre_shadow->GaussianBlur(radius=>$shadowblur,sigma=>$shadowblursigma);
+  $pre_shadow->Negate();
+  $pre_shadow->Modulate(brightness=>$shadowopacity);
+
+  #prepare actual shadow image
+  $shadow_img=Image::Magick->new(size=>$swidth."x".$sheight);
+  $shadow_img->ReadImage('xc:'.$shadowcolor);
+  $shadow_img->Set(type=>"TrueColorMatte");
+  $shadow_img->Composite(compose=>'CopyOpacity',image=>$pre_shadow);
+
+  #compose image and shadow and write to file
+  $resized->Composite(image=>$shadow_img,compose=>'Difference');
+
+  return $resized;
+}
+
+sub opacity
+{
+  my($imageref, $opacity) = @_;
+  my $opacity_img;
+  my $factor = $opacity / 100;
+
+  $opacity_img=$$imageref->Clone();
+  $opacity_img->Evaluate(value=>$factor, operator=>'Multiply', channel=>'Alpha');
+
+  return $opacity_img;
+}
+
+
+# HACK - Prevents transparency darkening on images with already present transparency.  Not sure why.  Same as shadow sub but with last line commented out.
+sub fix_image_transparency
+{
+  my($imageref, $swidth, $sheight, $shadowblur, $shadowblursigma, $shadowx, $shadowy, $shadowopacity) = @_;
+  my ($pre_shadow,$shadow_img,$resized);
+
+  $resized=Image::Magick->new(size=>$swidth."x".$sheight);
+  $resized->ReadImage('xc:transparent');
+  $resized->Set(type=>"TrueColorMatte");
+  $resized->Composite(image=>$$imageref,compose=>"Over");
+
+  #this is a template for making a shadow pixel by pixel
+  #basically, a black and white image to represent alpha channel.
+  $pre_shadow=$resized->Clone();
+  $pre_shadow->Separate(channel=>'Alpha');
+  $pre_shadow->Roll(x=>$shadowx,y=>$shadowy);
+  $pre_shadow->GaussianBlur(radius=>$shadowblur,sigma=>$shadowblursigma);
+  $pre_shadow->Negate();
+  $pre_shadow->Modulate(brightness=>$shadowopacity);
+
+  #prepare actual shadow image
+  $shadow_img=Image::Magick->new(size=>$swidth."x".$sheight);
+  $shadow_img->ReadImage('xc:black');
+  $shadow_img->Set(type=>"TrueColorMatte");
+  $shadow_img->Composite(compose=>'CopyOpacity',image=>$pre_shadow);
+
+  return $resized;
+}
+
+sub round_up {
+    my $n = shift;
+    return(($n == int($n)) ? $n : int($n + 1))
+}
+
+# May need some work on the hotspot
+sub resize
+{
+  my($imageref, $factor) = @_;
+  my ($sheight, $swidth) = $$imageref->Get('height', 'width');
+  my $resized;
+  my $addpixels = round_up(2 * (($factor / 100) - 1));   # Add 2 pixels for each additional 100% of resize
+
+  $rollpixels = int($addpixels / 2);
+
+  my $heightplus1 = $sheight + $addpixels;
+  my $widthplus1 = $swidth + $addpixels;
+  my $newwidth = int($swidth * ($factor / 100) + $addpixels * 2);
+  my $newheight = int($sheight * ($factor / 100)+ $addpixels * 2);
+
+
+  $resized=Image::Magick->new(size=>$widthplus1."x".$heightplus1);
+  $resized->ReadImage('xc:transparent');
+  $resized->Set(type=>"TrueColorMatte");
+  $resized->Composite(image=>$$imageref,compose=>"Over");
+  $resized->Roll(x=>$rollpixels,y=>$rollpixels);
+  $resized->Resize(geometry=>$newwidth."x".$newheight,filter=>'Cubic',blur=>'1.0',support=>'1');
+
+  if ($factor > 100){
+    $resized->AdaptiveSharpen(radius=>$addpixels * 2,sigma=>$addpixels * 2,channel=>'All');
+  }
+
+  return $resized;
+}
+
+# Rewrite Scheme.ini to tempfile (to number the lines) if contains "Script" information
+# or if it contains a [Description] Section, which is necessary because Stardock
+# and Cursor XP theme authors don't seem to follow INI specs hence perl doesn't read
+# it in properly
+
+sub rewrite_ini {
+  my $filename = shift();
+  open(INI, $filename) or die "Could not open Scheme.ini file: $!";
+  open(INIOUT, ">$tmpscheme.tmp"); #open for write, overwrite
+
+  my $atheader = 0;
+  my $inscriptheader = 0;
+  my $scriptheadercounter = 0;
+  my $indescription = 0;      # people get real non-spec compliant in [Description] it seems!
+  my $descriptioncounter = 0;
+  my $cursortitle;
+  my $cursorfile;
+  my $line;
+
+  foreach $line (<INI>) {
+    chomp($line);              # remove the newline from $line.
+
+    $line = change_case($line);
+    if ($line =~ m/^.*\[.*_Script\]\s*$/i){
+      if ($atheader eq "0" ){
+        print INIOUT $line."\n";
+        $inscriptheader = 1;
+        $scriptheadercounter = 0;
+        $atheader = 1;
+        $indescription = 0;
+      } else {
+        die "Incorrect ini format";
+      }
+    } elsif ($line =~ m/^.*\[Description\]\s*$/i){
+      print INIOUT $line."\n";
+      $indescription = 1;
+      $atheader = 1;
+    } elsif ($line =~ m/^.*\[.*\]\s*$/){
+      if ($atheader eq "0" ){
+        print INIOUT $line."\n";
+        $indescription = 0;
+        $inscriptheader = 0;
+        $scriptheadercounter = 0;
+        $atheader = 1;
+      } else {
+        die "Incorrect ini format";
+      }
+    } elsif ($line !~ m/^\s*$/){
+      if ($inscriptheader eq "1"){
+        print INIOUT $scriptheadercounter."=".$line."\n";
+        $scriptheadercounter = $scriptheadercounter + 1;
+        $atheader = 0;
+
+      } elsif ($indescription eq "1"){
+        print INIOUT $descriptioncounter."=".$line."\n";
+        $descriptioncounter = $descriptioncounter + 1;
+        $atheader = 0;
+      } else {
+        print INIOUT $line."\n";
+        $atheader = 0;
+        $inscriptheader = 0;
+
+      }
+    }
+  }
+  close (INIOUT);
+}
+
+
+# Fixes case issues in Scheme.ini because CursorXP Authors are sloppy!
+sub change_case {
+  my $input = shift();
+
+  if ($input =~  /Arrow/i) { $input =~ s/Arrow/Arrow/i; }
+  if ($input =~  /Cross/i) { $input =~ s/Cross/Cross/i; }
+  if ($input =~  /Hand/i) { $input =~ s/Hand/Hand/i; }
+  if ($input =~  /IBeam/i) { $input =~ s/IBeam/IBeam/i; }
+  if ($input =~  /UpArrow/i) { $input =~ s/UpArrow/UpArrow/i; }
+  if ($input =~  /SizeNWSE/i) { $input =~ s/SizeNWSE/SizeNWSE/i; }
+  if ($input =~  /SizeNESW/i) { $input =~ s/SizeNESW/SizeNESW/i; }
+  if ($input =~  /SizeWE/i) { $input =~ s/SizeWE/SizeWE/i; }
+  if ($input =~  /SizeNS/i) { $input =~ s/SizeNS/SizeNS/i; }
+  if ($input =~  /Help/i) { $input =~ s/Help/Help/i; }
+  if ($input =~  /Handwriting/i) { $input =~ s/Handwriting/Handwriting/i; }
+  if ($input =~  /AppStarting/i) { $input =~ s/AppStarting/AppStarting/i; }
+  if ($input =~  /SizeAll/i) { $input =~ s/SizeAll/SizeAll/i; }
+  if ($input =~  /Wait/i) { $input =~ s/Wait/Wait/i; }
+  if ($input =~  /NO/i) { $input =~ s/NO/NO/i; }
+  if ($input =~  /Description/i) { $input =~ s/Description/Description/i; }
+  $input =~ s/Script/Script/i;
+  return $input;
+}
+
+
+sub rewrite_riff_filesize_header {
+  my $riff_file = shift ();
+  my $actual_filesize = -s "$riff_file";
+  my $riff_filesize;
+  my $buff1;
+  my $buff2;
+
+  open(RIFF, "$riff_file");
+  seek (RIFF,0,SEEK_SET) or die "seek failed: $!";
+  read (RIFF,$buff1,4);
+  read (RIFF,$buff2,4);
+  binmode(RIFF);
+
+  if ( "$buff1" ne "RIFF" ) { error_message "File does not start with RIFF."; }
+
+  $riff_filesize = unpack("V",$buff2);
+  if ( $riff_filesize == $actual_filesize ) { return; }
+
+  else {
+    warning_message "$riff_file claims it is $riff_filesize bytes but is actually $actual_filesize.  Correcting.";
+    $buff2 = pack('V',$actual_filesize);
+    seek (RIFF,4,SEEK_SET) or die "seek failed: $!";
+    print RIFF $buff2;
+  }
+  close (RIFF) or die "close failed: $!";
+
+}
+
+sub read_windows_cursors {
+
+  if ($configini_installed != 1) { error_message "Config::IniFiles is required to convert Windows cursors.  Run cpan as root or see your distribution's documentation for installing this perl package."; }
+  if ($riff_installed != 1)      { error_message "File::Format::RIFF is required to convert Windows cursors.  Run cpan as root or see your distribution's documentation for installing this perl package."; }
+  if ($imager_installed != 1)    { error_message "Imager is required to convert Windows cursors.  Run cpan as root or see your distribution's documentation for installing this perl package."; }
+
+  my ($line);
+
+  my $theme_file = shift();
+  open(INF, $theme_file) or die "Could not open inf file: $!";
+
+  my $windows_cursor_file;
+  my $windows_cursor_name;
+  my $windows_theme_name;
+  my %windows_cursor_name_hash = ();
+
+  my @names = get_names_for (CURSOR_TYPE_WINDOWS);
+
+  foreach $line (<INF>) {
+    chomp($line);
+    $windows_cursor_name = $line;
+    $windows_cursor_file = $line;
+    $windows_theme_name = $line;
+
+    if ($line =~ m/^SCHEME_NAME\s*=\s*"[^"]+"\s*$/){ $windows_theme_name =~ s/^SCHEME_NAME\s*=\s*"([^"]+)"\s*$/$1/; }
+    else {
+      for (my $name_iterator=0; $name_iterator<@names; $name_iterator++) {
+        my $windows_cursor_name = $names[$name_iterator];
+        if ($line =~ m/^$windows_cursor_name\s*=\s*"[^"]+"\s*$/){
+          $windows_cursor_file =~ s/^$windows_cursor_name\s*=\s*"([^"]+)"\s*$/$1/;
+          $windows_cursor_name_hash{$windows_cursor_name} = $windows_cursor_file;
+
+          unless (-f $windows_cursor_file ) { error_message "Cursor file $windows_cursor_file not found."; }
+          copy("$windows_cursor_file","$cursor_temp_path/$windows_cursor_file") or die "Copy failed: $!";
+          convert_windows_cursor ("$cursor_temp_path/$windows_cursor_file", $windows_cursor_name);
+        }
+      }
+    }
+  }
+
+  # Check that all expected cursors have been accounted for
+  for (my $name_iterator=0; $name_iterator<@names; $name_iterator++) {
+    my $windows_cursor_name = $names[$name_iterator];
+    if ($windows_cursor_name_hash{$windows_cursor_name} eq "") {
+      error_message "No cursor information found for '$windows_cursor_name'";
+    }
+  }
+  close (INF);
+  # Recreate full theme file if valid?
+}
+
+
+
+sub concatenate_png {
+  my $filebasename = shift ();
+  my $outputdir = shift ();
+  my $frames = shift ();
+  my $outfile = "$outputdir/$filebasename.png";
+  my $iter = 0;
+  my $concatstring = "";
+
+  while ($iter <= @$frames - 1){
+    $concatstring.="$cursor_temp_path/$filebasename-$iter.png ";
+    $iter = $iter + 1;
+  }
+
+  debug_message ("concat output file: $outfile $iter $concatstring\n", 1);
+  `montage -tile ${iter}x1 -mode Concatenate -background none ${concatstring} $outfile`;
+}
+
+
+sub save_ico_data {
+  my $data = shift();
+  my $filename = shift();
+  open( OUT, ">$filename" ) or die "Could not open ico file: $!";
+  print OUT $data;
+  close (OUT);
+}
+
+
+sub cur_to_png {
+  my $infile = shift();
+  my $outfile = shift();
+  my $frames = shift();
+  my $hotspot_x;
+  my $hotspot_y;
+  my $width;
+  my $height;
+  my $icotool_output = $width = $height = $hotspot_x = $hotspot_y = `icotool -l $infile`;
+
+  $width =~ s/.*?--width=(\d+).*/$1/;
+  $height =~ s/.*?--height=(\d+).*/$1/;
+  $hotspot_x =~ s/.*?--hotspot-x=(\d+).*/$1/;
+  $hotspot_y =~ s/.*?--hotspot-y=(\d+).*/$1/;
+
+  `icotool -x $infile -o $outfile`;
+
+  $$frames[0]= { filename => $outfile, hotspot_x => $hotspot_x, hotspot_y => $hotspot_y, interval => '0' };
+  return ($width, $height);
+}
+
+sub ani_to_png {
+  my $ani_input_file = shift();
+  my $frames = shift();
+
+  my $filebasename = basename($ani_input_file,qr/\.[^.]*/);
+  $filebasename =~ s/\.ani$//;
+  my $icondata = "";
+  my $hotspot_x;
+  my $hotspot_y;
+  my $containsrate = 0;
+  my $count = 0;
+  my ($img, $ico_filename, $png_filename);
+  my $img = Imager->new();
+  my $rate = 6;  # good default framerate in case of problems (MS framerate is in jiffies = 1/60 of a second)
+
+  open( IN, $ani_input_file ) or error_message "Could not open file: $!";
+
+  my $riff1=File::Format::RIFF->read( \*IN ) or error_message "Error reading $ani_input_file: ".$img->errstr()." Some .ani files aren't recognized by perl File::Format::RIFF for whatever reason.";
+  close( IN );
+
+  foreach my $chunk ( $riff1->data ){
+    if ($chunk->id eq 'rate'){
+      $containsrate = 1;
+    }
+  }
+
+  foreach my $chunk ( $riff1->data )
+  {
+  $count = 0;
+    if ( $chunk->id eq 'LIST' && $chunk->type eq 'fram' ){
+      foreach my $icon ( $chunk->data )
+      {
+        $icondata=$icon->data;
+        $ico_filename = "$cursor_temp_path/$filebasename-$count.ico";
+        $png_filename = "$cursor_temp_path/$filebasename-$count.png";
+        save_ico_data ($icondata, $ico_filename);
+
+        $img->read(file=>$ico_filename) or die $img->errstr();
+        $hotspot_x = $img->tags(name => 'cur_hotspotx');
+        $hotspot_y = $img->tags(name => 'cur_hotspoty');
+        $img->write(file=>$png_filename) or die $img->errstr;
+
+        push @$frames, { filename => $png_filename, hotspot_x => $hotspot_x, hotspot_y => $hotspot_y, interval => $rate};
+        $count += 1;
+
+      }
+      concatenate_png($filebasename, $cursor_temp_path, $frames);
+    } elsif ( $chunk->id eq 'anih' && $containsrate eq "0"){
+      $rate = unpack("V",substr($chunk->data, 28, 4));		
+      $rate = ($rate * 1000) / 60;
+    } elsif ( $chunk->id eq 'rate' && $containsrate eq "1"){
+      $rate = unpack("V",substr($chunk->data, 0, 4));		# only grabs rate of first frame
+      $rate = ($rate * 1000) / 60;
+    }
+  }
+  return ($img->getwidth(), $img->getheight());
+}
+
+
+sub convert_windows_cursor {
+  my $windows_cursor_file = shift();
+  my $windows_cursor_name = shift();
+  my $output_cursor_file = basename($windows_cursor_file,qr/\.[^.]*/);
+  my $num_frames;
+  my @frames;
+  my ($width, $height);
+
+  $output_cursor_file =~ s/\.ani$//;
+  $output_cursor_file =~ s/\.cur$//;
+  $output_cursor_file ="$cursor_temp_path/$output_cursor_file.png";
+
+  debug_message ("output cursor file $output_cursor_file", 1);
+
+  if ($windows_cursor_file =~ m/\.ani$/){
+    rewrite_riff_filesize_header "$windows_cursor_file";
+    ($width, $height) = ani_to_png( $windows_cursor_file, \@frames);
+  }
+  elsif ($windows_cursor_file =~ m/\.cur$/){ 
+    ($width, $height) = cur_to_png($windows_cursor_file, $output_cursor_file, \@frames); 
+  }
+  else { error_message "Unsupported file extension in ini file: $windows_cursor_file"; }
+
+  $num_frames = @frames;
+  debug_message ("frames: $num_frames\n", 1);
+  push @cursors, { frames => [ @frames ], script => [  ], numscript => 0, width => $width, height => $height, name => $windows_cursor_name, numframes => $num_frames, filename => $output_cursor_file, linksto => '' };
+}
+
+
+# adapted from gursormaker python function ReadXCursor
+# reads in an x cursor and outputs png image(s)
+sub read_x11_cursors {
+
+  ###############
+  error_message "Reading X11 cursors is not implemented yet.";
+
+  my $infile = shift();
+  my $outfileprefix = shift();
+
+  my ($magic, $header, $version, $ntoc, $ctype, $csubtype, $xhot, $yhot, @ftype, @size, @position, @width, @height, @delay, @pixels, $temp, $img, $x, $pixel);
+
+  open IN, $infile or die "\nCan't open $infile for reading: $!\n";
+
+  read (IN, $magic, 4);
+  if ($magic ne "Xcur"){ print "$infile is not an X cursor"; close(IN); graceful_exit 1;}
+
+  read (IN, $temp, 4); $header = unpack("V",$temp);
+  read (IN, $temp, 4); $version = unpack("V",$temp);
+  read (IN, $temp, 4); $ntoc = unpack("V",$temp);
+
+  for (my $i=0; $i<$ntoc; $i++) {
+    read (IN, $temp, 4); push(@ftype, unpack("V",$temp));
+    read (IN, $temp, 4); push(@size, unpack("V",$temp));
+    read (IN, $temp, 4); push(@position, unpack("V",$temp));
+  }
+
+  for (my $i=0; $i<$ntoc; $i++) {
+    seek IN, $position[$i], 0;
+    read (IN, $temp, 4); $header = unpack("V",$temp);
+    read (IN, $temp, 4); $ctype = unpack("V",$temp);
+    read (IN, $temp, 4); $csubtype = unpack("V",$temp);
+
+    if ($ctype != $ftype[$i] || $csubtype != $size[$i]){ print "Not an x cursor"; close(IN); graceful_exit 1;}
+    if ($ctype - 256^4 == -131071){ print ""; }
+    if ($ctype - 256^4 == -196606){
+
+      read (IN, $temp, 4); $version = unpack("V",$temp);
+      read (IN, $temp, 4); push(@width, unpack("V",$temp));
+      read (IN, $temp, 4); push(@height, unpack("V",$temp));
+      read (IN, $temp, 4); $xhot = unpack("V",$temp);
+      read (IN, $temp, 4); $yhot = unpack("V",$temp);
+      read (IN, $temp, 4); push(@delay, unpack("V",$temp));
+
+      $img=Image::Magick->new(size=>$width[$i]."x".$height[$i]);
+      $img->ReadImage('xc:transparent');
+      $img->Set(type=>"TrueColorMatte");
+
+      for (my $h=0; $h < $height[$i]; $h++){
+        for (my $w=0; $w < $width[$i]; $w++){
+          read (IN, $temp, 4);
+          my ($b,$g,$r,$a) = split(//, $temp);
+          $pixel = "#".unpack("H*", "$r$g$b$a");
+          $img->Set("pixel[$w,$h]"=>"$pixel");
+        }
+      }
+
+      $x=$img->Write("$outfileprefix-$i.png");
+
+    }
+  }
+  close(IN);
+}
+
+
+
+sub read_cursorfx_cursors {
+
+  my $infile = shift();
+  my $outfileprefix = shift();
+  my ($magic, $header, $version, $ntoc, $ctype, $csubtype, $xhot, $yhot, @ftype, @size, @position, @width, @height, @delay, @pixels, $filedata, $img, $x, $pixel, $status, $filesize, $decompressed);
+  my ($animation_type, $bytesread, $cursors, $cursors2, $cursor_status, $data, $data_size_before_compressed, $dest, $frame_count, $frame_height, $frame_interval, $frame_width, $garbage, $header_size, $image, $image_data, $image_height, $image_index, $image_width, $info, $info_size, $mouse_x, $mouse_y, $pointer_type, @script, $script, $script_temp_path, $section_script, $size_of_header_and_image, $size_of_header_without_script, $size_of_header_without_script2, $size_of_header_with_script, $size_of_image, $size_of_script, $stuff, $theme_info, $theme_type, $unknown1, $unknown3, $unknown4);
+  binmode IN;
+
+  if ($compresszlib_installed != 1) { error_message "Compress::Zlib is required to import CursorFX cursors.  Run cpan as root or see your distribution's documentation for installing this perl package."; }
+
+  open IN,  $infile or die "\nCan't open $infile for reading: $!\n";
+  $filesize = -s "$infile";
+
+
+  read (IN, $filedata, 4); $version = unpack("V",$filedata);
+  read (IN, $filedata, 4); $header_size = unpack("V",$filedata);
+  read (IN, $filedata, 4); $data_size_before_compressed = unpack("V",$filedata);
+  read (IN, $filedata, 4); $theme_type = unpack("V",$filedata);
+  read (IN, $filedata, $header_size-20); #$garbage = unpack("A",$filedata);
+  read (IN, $filedata, 4); $info_size = unpack("V",$filedata);
+  read (IN, $filedata, $filesize - $header_size);
+  close(IN);
+
+  # Uncompress data and store into a temporary file
+  $decompressed = uncompress($filedata);
+  open(OUTFILE, '>', "$cursor_temp_path/temp.bin") or die "Unable to open: $!";
+  print OUTFILE "$decompressed" ;
+  close(OUTFILE);
+
+  open IN, "$cursor_temp_path/temp.bin" or die "\nCan't open 'temp.bin' for reading: $!\n";
+  read (IN, $filedata, $info_size); $info= unpack('a'.$info_size,decode("UTF-16LE", $filedata));
+  debug_message ("info:$info ", 1);
+
+  while (! eof(IN)){
+    read (IN, $filedata, 4); $pointer_type = unpack("V",$filedata); #// 2 for pointer, 4 for effect, 8 for trail
+    read (IN, $filedata, 4); $size_of_header_without_script = unpack("V",$filedata);
+    read (IN, $filedata, 4); $size_of_header_and_image = unpack("V",$filedata);
+
+    #// effect & trail and not supported by cfx2xc, and the detail info are unknown
+    #// info below are for type 'pointer' only (pointer_type == 2)
+    read (IN, $filedata, 4); $unknown1 = unpack("V",$filedata);
+    read (IN, $filedata, 4); $image_index = unpack("V",$filedata); #// 0-19, the index of this pointer,
+                      #// 0 for standard_select, 19 for button etc...
+    read (IN, $filedata, 4); $cursor_status = unpack("V",$filedata); #// 1 for normal, 2 for pressed
+    read (IN, $filedata, 4); $unknown3 = unpack("V",$filedata);
+    read (IN, $filedata, 4); $frame_count = unpack("V",$filedata);
+    read (IN, $filedata, 4); $image_width = unpack("V",$filedata);
+    read (IN, $filedata, 4); $image_height = unpack("V",$filedata);
+    read (IN, $filedata, 4); $frame_interval = unpack("V",$filedata);
+    read (IN, $filedata, 4); $animation_type = unpack("V",$filedata); #// 0 for none, 2 for loop, 3 for alternate
+    read (IN, $filedata, 4); $unknown4 = unpack("V",$filedata);
+    read (IN, $filedata, 4); $mouse_x = unpack("V",$filedata); #// hot spot
+    read (IN, $filedata, 4); $mouse_y = unpack("V",$filedata);
+    read (IN, $filedata, 4); $size_of_header_with_script = unpack("V",$filedata); #// == size_of_header + size_of_script
+    read (IN, $filedata, 4); $size_of_image = unpack("V",$filedata);
+    read (IN, $filedata, 4); $size_of_header_without_script2 = unpack("V",$filedata);
+    read (IN, $filedata, 4); $size_of_script = unpack("V",$filedata);
+
+    debug_message ("pt:$pointer_type WxH:$image_width.$image_height at:$animation_type mxy:$mouse_x,$mouse_y fc:$frame_count soi:$size_of_image sos:$size_of_script soh:$size_of_header_without_script soh2:$size_of_header_without_script2   ", 1);
+
+    if ( $size_of_header_without_script ne $size_of_header_without_script2) { error_message "Error 1";}
+    if ( $size_of_header_with_script ne $size_of_header_without_script + $size_of_script) { error_message "Error 2";}
+    if ( $size_of_header_and_image ne $size_of_header_with_script + $size_of_image) { error_message "Error 4";}
+    if ( $size_of_image ne $image_width * $image_height * 4) { error_message "Error 5";}
+
+    read (IN, $filedata, $size_of_script); $script= unpack('a'.$size_of_script,decode("UTF-16LE", $filedata));
+    read (IN, $filedata, $size_of_image); $image_data= unpack('a'.$size_of_image,$filedata);
+
+
+    $image=Image::Magick->new(magick=>"RGBA",size=>"$image_width".'x'."$image_height",depth=>"8");
+    $x=$image->BlobToImage($image_data);
+    $image->Flip();
+    $image->Write("${cursor_temp_path}/img$image_index-$cursor_status.png");
+
+
+
+    my ($outfilename, $infilename, $infilenamelc, $x,  $hotspot_x, $hotspot_y, $numscript);
+
+
+    $infilename="${cursor_temp_path}/img$image_index-$cursor_status.png";
+    $infilenamelc="$cursor_temp_path/lc($image_index).png";
+
+    $frame_width=$image->Get('width')/$frame_count;
+    $frame_height=$image->Get('height');
+
+
+    # process frames
+    my @frames = ();
+    for (my $i=0; $i<$frame_count; $i++) {
+      $outfilename="${cursor_temp_path}img$image_index-$cursor_status-$i.png";
+      $frames[$i]= { filename => $outfilename, hotspot_x => $mouse_x, hotspot_y => $mouse_y, interval => $frame_interval };
+    }
+
+    # process script
+    # NOT IMPLEMENTED YET
+        if (0){
+        $numscript = 0;
+        if ($size_of_script gt 0){
+          my $scripti = 0;
+          my $i = 0;
+          my $getinfo;
+          my $frame_interval;
+          my $startframe;
+          my $endframe;
+          my $whichframes;
+
+          while ($cfg->val($section_script, $scripti) ne ""){
+            $startframe = "";
+            $endframe = "";
+
+            $getinfo=$cfg->val($section_script, $scripti);
+            ($whichframes, $frame_interval) = split (/,/ , $getinfo);
+            #print $frames." ".$interval."\n";
+
+            ($startframe, $endframe) = split (/-/ , $whichframes);
+
+            if ($frame_interval > 1000000){
+              $frame_interval = 1000000;
+            }
+
+            if ($endframe !~ /\d/ ){
+              $endframe = $startframe;
+            }
+
+
+            for (my $i=$startframe-1; $i<$endframe; $i++) {
+              $script[$numscript][0]=$i;
+              $script[$numscript][1]=$frame_interval;
+              $numscript = $numscript + 1;
+            }
+            $scripti = $scripti + 1;
+
+          }
+        }}
+
+    push @cursors, { frames => [ @frames ], script => [ @script ], numscript => $numscript, width => $frame_width, height => $frame_height, name => $image_index, numframes => $frame_count, filename => $infilename, linksto => '' };
+
+  }
+  debug_message ("VERSION:$version HEADERSIZE:$header_size DATASIZEBEFORECOMPRESSED:$data_size_before_compressed TYPE:$theme_type INFOSIZE:$info_size INFO:$info BYTESREAD:$bytesread STUFF:$stuff\n", 1);
+  debug_message ("DEST:$dest  STATIS:$status INFO:$info THEMEINFO:$theme_info STUFF:$stuff", 1);
+
+  return;
+}
+
+
+
+##### NEEDS WORK
+
+# populate the cursor array with data from cursor xp input files
+sub read_cursorxp_cursors {
+  foreach my $section (@sections) {
+    my ($outfilename, $infilename, $infilenamelc, $image, $x, $numframes, $width, $height, $curout, $hotspot_x, $hotspot_y, $interval, $numscript);
+
+    if ($section =~ /Description/i){
+      my $i = 0;
+      while ($cfg->val($section, $i) ne ""){
+        $comment = $comment." ".$cfg->val($section, $i);
+        $i = $i + 1;
+      }
+    }
+
+    $numframes=$cfg->val($section, 'Frames');
+
+    $infilename="$cursor_temp_path/$section.png";
+    $infilenamelc="$cursor_temp_path.lc($section).png";
+    unless (-f $infilename || -f $infilenamelc) {
+      next;
+    }
+
+    $image=Image::Magick->new;
+    $x=$image->Read($infilename);
+    warn "$x" if "$x";
+
+    $width=$image->Get('width')/$numframes;
+    $height=$image->Get('height');
+    $hotspot_x = $cfg->val($section,'Hot spot x');
+    $hotspot_y = $cfg->val($section,'Hot spot y');
+    $interval = $cfg->val($section,'Interval');
+
+    # process frames
+    my @frames = ();
+    for (my $i=0; $i<$numframes; $i++) {
+
+      $outfilename="$cursor_temp_path/$section-$i.png";
+      $frames[$i]= { filename => $outfilename, hotspot_x => $hotspot_x, hotspot_y => $hotspot_y, interval => $interval };
+    }
+
+    # process script
+    my $section_script=$section."_Script";
+    my @script;
+    $numscript = 0;
+    if (defined ($cfg->val($section_script, "0"))){
+      my $scripti = 0;
+      my $i = 0;
+      my $getinfo;
+      my $interval;
+      my $startframe;
+      my $endframe;
+      my $whichframes;
+
+      while ($cfg->val($section_script, $scripti) ne ""){
+        $startframe = "";
+        $endframe = "";
+
+        $getinfo=$cfg->val($section_script, $scripti);
+        ($whichframes, $interval) = split (/,/ , $getinfo);
+        #print $frames." ".$interval."\n";
+
+        ($startframe, $endframe) = split (/-/ , $whichframes);
+
+        if ($interval > 1000000){
+          $interval = 1000000;
+        }
+
+        if ($endframe !~ /\d/ ){
+          $endframe = $startframe;
+        }
+
+
+        for (my $i=$startframe-1; $i<$endframe; $i++) {
+          $script[$numscript][0]=$i;
+          $script[$numscript][1]=$interval;
+          $numscript = $numscript + 1;
+        }
+        $scripti = $scripti + 1;
+
+      }
+    }
+
+    push @cursors, { frames => [ @frames ], script => [ @script ], numscript => $numscript, width => $width, height => $height, name => $section, numframes => $numframes, filename => $infilename, linksto => '' };
+  }
+}
+
+
+# create processed (shadow, opacity, etc.) temporary images of cursors from date in @cursors
+sub process_cursor {
+  my ($image, $x, $width, $height);
+  my $cursornumber = shift();
+  my $infilename = $cursors[$cursornumber]->{'filename'};
+  my $cursorname = $cursors[$cursornumber]->{'name'};
+  my $numframes = $cursors[$cursornumber]->{'numframes'};
+
+  printf "PRocessing cursor: $infilename $cursorname $numframes \n";
+
+  $image=Image::Magick->new;
+  $x=$image->Read($infilename);
+  warn "$x" if "$x";
+  $width=$image->Get('width')/$numframes;
+  $height=$image->Get('height');
+
+
+  my $yoffset = $shadowy + $shadowblur;
+  my $xoffset = $shadowx + $shadowblur;
+  my $swidth = ($width + $xoffset + $shadowblur)*$newsize/100;
+  my $sheight = ($height + $yoffset + $shadowblur)*$newsize/100;
+  $rollpixels = int(round_up(2 * (($newsize / 100) - 1)) / 2);
+  my $hotspot_x = int(( $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_x'}  + $rollpixels)* $newsize/100);
+  my $hotspot_y = int(( $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_y'}  + $rollpixels)* $newsize/100);
+
+  if ($flip eq "before"){
+    $hotspot_x = $width - $hotspot_x;
+  }
+  if ($flip eq "after"){
+    $hotspot_x = int(round_up($swidth - $hotspot_x));
+  }
+
+  # Save new values back into @cursors
+  $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_x'} = $hotspot_x;
+  $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_y'} = $hotspot_y;
+  if ($shadow){
+    $cursors[$cursornumber]->{'width'} = $width;
+    $cursors[$cursornumber]->{'height'} = $height;
+  }
+#### STILL NEED TO DO THIS FOR RESIZED BUT NOT SHADOWED CURSORS?
+
+  verbose_message "Creating $infilename\n";
+
+
+  for (my $i=0; $i<$numframes; $i++) {
+
+    # keep track of this for screenshot-large
+    if ($numframes > $maxframes){ $maxframes = $numframes; }
+    if ($height > $maxheight){ $maxheight = $height; }
+    if ($width > $maxwidth){ $maxwidth = $width; }
+    if ($shadow){
+      if ($sheight > $maxheight){ $maxheight = $sheight; }
+      if ($swidth > $maxwidth){ $maxwidth = $swidth; }
+    }
+
+    my ($tmpimg, $pngoutfile);
+    $pngoutfile="$cursor_temp_path/$cursorname-$i.png";
+    $tmpimg=$image->Clone();
+
+
+    $x=$tmpimg->Crop(width=>$width, height=>$height, x=>$i*$width, y=>0);
+    warn "$x" if "$x";
+
+    if ($newsize ne "100"){
+      $tmpimg=resize(\$tmpimg, $newsize);
+    }
+
+    if ($opacity < 100)
+    {
+      $tmpimg=opacity(\$tmpimg, $opacity);
+    }
+
+    # Flip back on certain cursors - more correct to do in these special cases
+    if ($lefthanded){
+      if ($cursorname eq "SizeNWSE" || $cursorname eq "SizeNESW"){ # || $section eq "Wait"){
+        $tmpimg->Flop();
+      }
+    }
+
+    if ($flip eq "before"){
+      $tmpimg->Flop();
+    }
+
+    if ($shadow)
+    {
+      $tmpimg=shadow(\$tmpimg, $swidth, $sheight, $shadowblur, $shadowblursigma, $shadowx, $shadowy, $shadowopacity);
+    } else {
+      $tmpimg=fix_image_transparency(\$tmpimg, $swidth, $sheight, $shadowblur, $shadowblursigma, $shadowx, $shadowy, $shadowopacity);
+    }
+
+    if ($flip eq "after"){
+      $tmpimg->Flop();
+    }
+
+    $x=$tmpimg->Write($pngoutfile);
+
+    warn "$x" if "$x";
+  }
+
+}
+
+# Cycle through cursor array and process the images for each cursor
+sub process_cursors {
+  for (my $i=0; $i<@cursors; $i++) {
+    if ($cursors[$i]->{'linksto'} eq ""){
+      process_cursor($i);
+    }
+  }
+}
+
+# Output X11 cursors / links from processed images and data in @cursors
+sub output_x11_cursors {
+
+  my ($outputfilename, $mainfilename);
+#printf "$mainfilename\n"; exit;
+
+mkpath "$output_path/cursors";
+
+  for (my $i=0; $i<@cursors; $i++) {
+
+    my $linksto = $cursors[$i]->{'linksto'};
+    my $name = $cursors[$i]->{'name'};
+    my $filename = $cursors[$i]->{'filename'};
+
+    # Array of main filename and optional aliases to be symlinked
+    my @maparray = get_mapped_names_for($name, $input_cursortype, $output_cursortype);
+
+    # The first filename in the array, written as the real file; others symlink to it.
+    $mainfilename = $maparray[0];
+
+    # Actual file
+    if ($cursors[$i]->{'linksto'} eq ""){
+      output_x11_cursor($i, $mainfilename);
+    } else {
+      verbose_message "Creating symlink $mainfilename -> $linksto\n";
+      $status=`if [ -f $mainfilename ]; then rm $mainfilename; fi; ln -s $linksto $mainfilename`;
+    }
+
+    # Symlinks
+    for (my $filenumber=1; $filenumber<@maparray; $filenumber++) {
+      $outputfilename = $maparray[$filenumber];
+
+      verbose_message "Creating symlink $outputfilename -> $mainfilename\n";
+      my $outdir = "$output_path/cursors";
+      $status=`cd $outdir; if [ -f $outputfilename ]; then rm $outputfilename; fi; ln -s $mainfilename $outputfilename`;
+    }
+  }
+
+  verbose_message "Writing theme index file.\n";
+
+  $comment = $comment." - Converted by $script_name";
+
+  open (FH, "> ${output_path}/index.theme");
+print FH <<EOF;
+[Icon Theme]
+Name=$name
+Comment=$comment
+Example=left_ptr
+Inherits=$inherits
+EOF
+  close (FH);
+  verbose_message "Theme written to ${output_path}\n";
+}
+
+
+sub get_names_for {
+  my $cursor_type_given = shift();
+  my @returnarray = ();
+
+  for (my $namemap_iterator=0; $namemap_iterator<@cursor_namemap; $namemap_iterator++) {
+    my @cursor_type_array = @{$cursor_namemap[$namemap_iterator][$cursor_type_given]};
+    foreach my $check_cursor_name (@cursor_type_array){
+      push(@returnarray, $check_cursor_name);
+    }
+  }
+  return @returnarray;
+}
+
+# Used in output functions to translate names between cursor types
+sub get_mapped_names_for {
+  my $cursor_name = shift();
+  my $cursor_type_given = shift();
+  my $cursor_type_needed = shift();
+  my @returnarray = ();
+
+  # Cycle through cursor_namemap
+  for (my $namemap_iterator=0; $namemap_iterator<@cursor_namemap; $namemap_iterator++) {
+    my @cursor_type_array = @{$cursor_namemap[$namemap_iterator][$cursor_type_given]};
+    # Check each value in cursor array.
+    foreach my $check_cursor_name (@cursor_type_array){
+      # If matched, return the array for the requested cursor type
+      if ($check_cursor_name eq $cursor_name){
+        @returnarray = @{$cursor_namemap[$namemap_iterator][$cursor_type_needed]};
+        return @returnarray;
+      }
+    }
+  }
+  error_message "File map entry not found for $cursor_name!";
+  return @returnarray;
+}
+
+
+# Output a single X11 Cursor from processed temp images and data in @cursors
+sub output_x11_cursor {
+  my $cursornumber = shift();
+  my $outfilename = shift();
+  my $cursorname = $cursors[$cursornumber]->{'name'};
+  my $numscript = $cursors[$cursornumber]->{'numscript'};
+  my $numframes = $cursors[$cursornumber]->{'numframes'};
+  my $hotspot_x = $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_x'} ;
+  my $hotspot_y = $cursors[$cursornumber]->{'frames'}[0]->{'hotspot_y'} ;
+  my $temp_imagefile;
+  my $scripti = 0;
+
+  my $fulloutfile="$output_path/cursors/$outfilename";
+
+  open (FH, "| $generator > \"$fulloutfile\"");
+  verbose_message "Converting $cursorname -> $outfilename\n";
+
+
+  # Manage the order that frames are displayed
+  # If there is a _Script, process as such
+
+  if ($numscript > 0){
+    foreach my $script (@{$cursors[$cursornumber]->{'script'}}){
+
+      if ($scripti >= $scriptlimit){ next; }
+
+      my $whichframe = $script->[0];
+      my $interval = $script->[1];
+      $temp_imagefile="$cursor_temp_path/$cursorname-$whichframe.png";
+
+        print FH "1 ".
+        $hotspot_x." ".
+        $hotspot_y." ".
+        $temp_imagefile." ".
+        $interval."\n";
+
+      $scripti = $scripti + 1;
+    }
+  } else {  # Otherwise do normal static or normal looping animated
+    for (my $i=0; $i<$numframes; $i++) {
+      $temp_imagefile="$cursor_temp_path/$cursorname-$i.png";
+
+      print FH  "1 ".
+      $hotspot_x." ".
+      $hotspot_y." ".
+      $temp_imagefile." ".
+      $cursors[$cursornumber]->{'frames'}[$i]->{'interval'} ."\n";
+    }
+  }
+  close (FH);
+}
+
+
+# print the whole cursor array (for debug purposes)
+sub print_cursor_array {
+  foreach my $cursor ( @cursors ) {
+    print "Name:      $cursor->{'name'}\n";
+    print "File:      $cursor->{'filename'}\n";
+    print "Height:    $cursor->{'height'}\n";
+    print "Width:     $cursor->{'width'}\n";
+    print "Linksto:   $cursor->{'linksto'}\n";
+    print "Frames:    $cursor->{'numframes'}\n";
+    print "Numscript: $cursor->{'numscript'}\n";
+    foreach my $frame (@{$cursor->{'frames'}}){
+      print "\tFilename: $frame->{'filename'}\n";
+      print "\thotspot_x: $frame->{'hotspot_x'}\n";
+      print "\thotspot_y: $frame->{'hotspot_y'}\n";
+      print "\tinterval: $frame->{'interval'}\n";
+    }
+    foreach my $script (@{$cursor->{'script'}}){
+      print "\tScript: $script->[0], $script->[1] \n";
+
+    }
+  }
+}
+
+sub tar_gz_theme {
+  $status = `cd $output_parent_path; pwd; tar zcf $cwd_dirname/$name.tar.gz $name;`;
+  verbose_message "Theme zipped into ./$name.tar.gz\n";
+}
+
+sub install_cursors{
+  $status = `mkdir -p ~/.icons; rm -r ~/.icons/$name/*; cp -Rp $output_parent_path/$name ~/.icons/;`;
+  verbose_message "Theme installed into ~/.icons/\n";
+}
+
+sub make_screenshot {
+  verbose_message "Making screenshot $cwd_dirname$name-screenshot.png\n";
+  $status =`montage -geometry +5+5 -title '$name' $cursor_temp_path/*-0.png $cwd_dirname/$name-screenshot.png`;
+}
+
+sub make_screenshot_full {
+  verbose_message "Making full screenshot $cwd_dirname$name-screenshot-full.png\n";
+
+  $status=`cd $cwd_dirname`;
+
+  my $allnamestring;
+  my $namestring;
+  my $filename;
+  my $geometry="-geometry '".$maxwidth."x".$maxheight."+0+0'";
+  #my $geometry="-geometry x".$maxheight."+0+0";
+
+  #my $tile="-tile ".$maxframes."x1 ";
+  my $tile="-tile x1 ";
+  my $dejavu=`convert -list font | grep "^DejaVu-Sans-Bold " | wc -l`;
+  my $font;
+  if (chomp($dejavu) eq "1"){ $font = "-font DejaVu-Sans-Bold "; } else { $font = "" };
+
+  #foreach my $cursor (@cursors) {
+  for (my $i=0; $i<@cursors; $i++) {
+
+    my $cursorname = $cursors[$i]->{'name'};
+    $namestring="";
+
+    my @maparray = get_mapped_names_for($cursorname, $input_cursortype, $output_cursortype);
+
+    # The first filename in the array, written as the real file in most cases; others symlink to it.
+    my $mainfilename = $maparray[0];
+
+
+    # create cursor title images
+    #-annotate +11+11 '$section' -blur 0x2
+    $status = `convert  -background none -size 120x$maxheight xc:none $font -pointsize 10  -draw "text 10,10 '$mainfilename'" $cursor_temp_path/$name-$cursorname-title.png`;
+
+    for (my $i=0; $i<$maxframes; $i++) {
+      $filename = "$cursor_temp_path/$cursorname-$i.png";
+      if (-e $filename){
+        $namestring = "$namestring"."$filename ";
+      }
+    }
+
+    # create cursor image group
+    $status =`montage -background none $geometry $tile $namestring $cursor_temp_path/$name-$cursorname-noname.png`;
+
+    # concatenate cursor title with cursor images
+    $status =`montage -background none -geometry +0+0  -tile x1 -label "" $cursor_temp_path/$name-$cursorname-title.png $cursor_temp_path/$name-$cursorname-noname.png $cursor_temp_path/$name-$cursorname.png`;
+
+
+  }
+
+  $allnamestring = "$cursor_temp_path/$name-Arrow.png $cursor_temp_path/$name-Wait.png $cursor_temp_path/$name-AppStarting.png $cursor_temp_path/$name-Hand.png $cursor_temp_path/$name-Cross.png $cursor_temp_path/$name-IBeam.png $cursor_temp_path/$name-UpArrow.png $cursor_temp_path/$name-SizeWE.png $cursor_temp_path/$name-SizeNS.png $cursor_temp_path/$name-SizeNWSE.png $cursor_temp_path/$name-SizeNESW.png $cursor_temp_path/$name-SizeAll.png $cursor_temp_path/$name-Handwriting.png $cursor_temp_path/$name-NO.png";
+
+  #transparent
+  #$status =`montage -background none -geometry +0+0 $font -pointsize 10 -tile 1x -title '$name' $allnamestring $cursor_temp_path/$name-screenshot-full.png`;
+
+  # white
+  $status =`montage -background white -geometry +0+0 $font -pointsize 10 -tile 1x -title '$name' $allnamestring $cursor_temp_path/$name-screenshot-full.png`;
+
+
+  # Just copy
+  $status =`convert $cursor_temp_path/$name-screenshot-full.png  $cwd_dirname$name-screenshot-full.png`;
+
+}
+
+sub read_native_cursors {
+  # Read cursors object from file
+  my @cursors2;
+  @cursors2 = eval { do "cursors.cfg" };
+    # Might need "no strict;" before and "use strict;" after "do"
+  die "Error reading: $@" if $@;
+  $cursors = $cursors2;
+}
+
+sub output_native_cursors {
+  # write cursors object to file
+  open(FILE, "> ${output_path}/cursors.cfg") || die "Can not open: $!";
+  print FILE Data::Dumper->Dump([@cursors],["cursors"]);
+  close(FILE) || die "Error closing file: $!";
+
+  # tar up directory and save as xcc
+  # tar zcf $cwd_dirname/$name.xcc $output_parent_path
+}
+
+
+sub output_cursorfx_cursors {
+  error_message "Output CursorFX cursors is not implemented yet.";
+}
+
+sub output_cursorxp_cursors {
+  error_message "Output CursorXP cursors is not implemented yet.";
+}
+
+sub output_windows_cursors {
+  error_message "Output Windows cursors is not implemented yet.";
+}
+
+sub set_paths {
+  my $theme_input_file = shift();
+
+  $cwd_dirname = "./";
+
+  ($input_filename,$path,$input_suffix) = fileparse($theme_input_file,qr/\.[^.]*/);
+
+  $input_filename = fileparse($theme_input_file,qr/\.[^.]*/);
+  $input_basename = basename($theme_input_file,qr/\.[^.]*/);
+  $input_dirname  = dirname($theme_input_file);
+
+
+  if ($cwd_dirname =~ / /) {
+    error_message "Spaces in names, filenames, and paths not allowed at the moment.";
+  }
+
+  if ($input_dirname =~ / /) {
+    error_message "Spaces in names, filenames, and paths not allowed at the moment";
+  }
+
+  if ($input_filename =~ / /) {
+    error_message "Spaces in names, filenames, and paths not allowed at the moment";
+  }
+
+  debug_message ("input_filename:$input_filename input_basename:$input_basename input_dirname:$input_dirname input_suffix:$input_suffix", 1);
+
+  if ( $override_name eq "" ) { debug_message ("Not overriding name\n", 1); $override_name=$input_filename; $name=$input_filename; }
+  else { debug_message ("OVERRIDING NAME\n", 1); $name = $override_name; }
+
+  if ($name =~ / /) {
+    error_message "Spaces in names, filenames, and paths not allowed at the moment";
+  }
+
+  $script_temp_path = "/tmp/$script_name/$name";
+  $cursor_temp_path = "$script_temp_path/temp";
+
+  $output_path = "$script_temp_path/$output_type_name/$name";
+  $output_parent_path = "$script_temp_path/$output_type_name";
+
+  debug_message ("mkpath ($script_temp_path, $cursor_temp_path, $output_path)", 1);
+  mkpath ($script_temp_path, $cursor_temp_path, $output_path, {
+      verbose => 0,
+      mode => 0755,
+  });
+}
+
+
+sub main {
+
+  if ($ARGV[0] ne "") {
+    $theme_input_file = $ARGV[0];
+
+    unless (-f $theme_input_file) {
+      error_message "$theme_input_file not found.";
+    }
+    set_paths ($theme_input_file);
+  }
+  else {
+    error_message "Input filename must be provided."
+  }
+
+  if ($imagemagick_installed != 1) { error_message "Image::Magick must be installed."; }
+
+  if ($input_suffix =~ /.cursorfx/i)       { $input_cursortype = CURSOR_TYPE_CURSORFX; }
+  if ($input_suffix =~ /.curxptheme/i)     { $input_cursortype = CURSOR_TYPE_CURSORXP; }
+  if ($input_suffix =~ /.cursorxp/i)       { $input_cursortype = CURSOR_TYPE_CURSORXP; }
+  if ($theme_input_file =~ /Scheme.ini$/i) { $input_cursortype = CURSOR_TYPE_CURSORXPDIR; }
+  if ($theme_input_file =~ /.inf$/i)       { $input_cursortype = CURSOR_TYPE_WINDOWS; }
+  if ($input_suffix =~ /.xcc$/i)           { $input_cursortype = CURSOR_TYPE_NATIVE; }
+
+  given ($output_type_name) {
+    when ("cursorfx") { $output_cursortype = CURSOR_TYPE_CURSORFX;}
+    when ("cursorxp") { $output_cursortype = CURSOR_TYPE_CURSORXP; }
+    when ("native")   { $output_cursortype = CURSOR_TYPE_NATIVE; }
+    when ("x11")      { $output_cursortype = CURSOR_TYPE_X11; }
+    when ("windows")  { $output_cursortype = CURSOR_TYPE_WINDOWS; }
+    default { error_message "Invalid output cursor type specified."; }
+  }
+
+  given ($input_cursortype) {
+    when (CURSOR_TYPE_CURSORFX) { read_cursorfx_cursors($theme_input_file); }
+    when (CURSOR_TYPE_CURSORXP) { read_cursorxp_cursors($theme_input_file); }
+    when (CURSOR_TYPE_NATIVE)   { read_native_cursors($theme_input_file); }
+    when (CURSOR_TYPE_WINDOWS)  { read_windows_cursors($theme_input_file); }
+    when (CURSOR_TYPE_X11)      { read_x11_cursors($theme_input_file); }
+    default { error_message "Invalid input cursor type specified."; }
+  }
+
+  if ($debug > 1) { print_cursor_array();}
+  process_cursors();
+
+  given ($output_cursortype) {
+    when (CURSOR_TYPE_CURSORFX) { output_cursorfx_cursors ($theme_input_file); }
+    when (CURSOR_TYPE_X11)      { output_x11_cursors($theme_input_file); }
+    when (CURSOR_TYPE_CURSORXP) { output_cursorxp_cursors($theme_input_file); }
+    when (CURSOR_TYPE_NATIVE)   { output_native_cursors($theme_input_file); }
+    when (CURSOR_TYPE_WINDOWS)  { output_windows_cursors($theme_input_file); }
+    default { error_message "Invalid output cursor type specified."; }
+  }
+
+  if (!$nozip){
+    tar_gz_theme();
+  }
+
+  if ($install){
+    install_cursors();
+  }
+
+  if ($makescreen){
+    make_screenshot();
+  }
+
+  if ($makescreenfull){
+    make_screenshot_full();
+  }
+
+  verbose_message "Done.\n";
+}
+
+
+
+main();
+graceful_exit 0;
+
+
+
+
+
+
